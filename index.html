@@ -163,9 +163,23 @@
         </button>
     </div>
 
-    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
     <script>
-        const socket = io();
+        // Get the current host for Socket.IO connection
+        const host = window.location.hostname;
+        const protocol = window.location.protocol;
+        const port = window.location.port;
+        const socket = io(`${protocol}//${host}${port ? ':' + port : ''}`, {
+            transports: ['websocket', 'polling'],
+            upgrade: true,
+            rememberUpgrade: true,
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            timeout: 20000
+        });
+
         const videoGrid = document.getElementById('videoGrid');
         const roomIdInput = document.getElementById('roomIdInput');
         const joinButton = document.getElementById('joinButton');
@@ -371,6 +385,14 @@
 
         socket.on('room-full', () => {
             showError('Room is full! Maximum 5 participants allowed.');
+        });
+
+        socket.on('connect_error', (error) => {
+            showError('Connection error: ' + error.message);
+        });
+
+        socket.on('connect_timeout', () => {
+            showError('Connection timeout. Please try again.');
         });
 
         // Toggle video and audio controls
