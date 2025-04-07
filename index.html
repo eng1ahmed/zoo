@@ -285,53 +285,6 @@
             });
         });
 
-        // Handle room events
-        socket.on('user-connected', (userId) => {
-            showStatus('New user connected: ' + userId);
-            const peerConnection = createPeerConnection(userId);
-            peerConnections[userId] = peerConnection;
-
-            // Create and send offer
-            peerConnection.createOffer()
-                .then(offer => {
-                    console.log('Created offer for user:', userId);
-                    return peerConnection.setLocalDescription(offer);
-                })
-                .then(() => {
-                    console.log('Sending offer to user:', userId);
-                    socket.emit('offer', peerConnection.localDescription, userId);
-                })
-                .catch(error => {
-                    console.error('Error creating offer:', error);
-                    showError('Error creating connection: ' + error.message);
-                });
-        });
-
-        socket.on('existing-participants', (participants) => {
-            console.log('Existing participants:', participants);
-            participants.forEach(userId => {
-                if (!peerConnections[userId]) {
-                    const peerConnection = createPeerConnection(userId);
-                    peerConnections[userId] = peerConnection;
-
-                    // Create and send offer
-                    peerConnection.createOffer()
-                        .then(offer => {
-                            console.log('Created offer for existing user:', userId);
-                            return peerConnection.setLocalDescription(offer);
-                        })
-                        .then(() => {
-                            console.log('Sending offer to existing user:', userId);
-                            socket.emit('offer', peerConnection.localDescription, userId);
-                        })
-                        .catch(error => {
-                            console.error('Error creating offer for existing user:', error);
-                            showError('Error creating connection: ' + error.message);
-                        });
-                }
-            });
-        });
-
         // Create peer connection
         function createPeerConnection(userId) {
             console.log('Creating peer connection for user:', userId);
@@ -340,7 +293,8 @@
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' },
                     { urls: 'stun:stun2.l.google.com:19302' }
-                ]
+                ],
+                iceCandidatePoolSize: 10
             });
 
             // Add local stream to peer connection
@@ -364,7 +318,14 @@
                 console.log('Connection state changed for user', userId, ':', peerConnection.connectionState);
                 if (peerConnection.connectionState === 'connected') {
                     showStatus('Connected to user: ' + userId);
+                } else if (peerConnection.connectionState === 'failed') {
+                    showError('Connection failed with user: ' + userId);
                 }
+            };
+
+            // Handle signaling state changes
+            peerConnection.onsignalingstatechange = () => {
+                console.log('Signaling state changed for user', userId, ':', peerConnection.signalingState);
             };
 
             // Handle incoming stream
@@ -379,6 +340,63 @@
             return peerConnection;
         }
 
+        // Handle room events
+        socket.on('user-connected', (userId) => {
+            console.log('New user connected:', userId);
+            showStatus('New user connected: ' + userId);
+            
+            // Create peer connection for the new user
+            const peerConnection = createPeerConnection(userId);
+            peerConnections[userId] = peerConnection;
+
+            // Create and send offer
+            peerConnection.createOffer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: true
+            })
+                .then(offer => {
+                    console.log('Created offer for user:', userId);
+                    return peerConnection.setLocalDescription(offer);
+                })
+                .then(() => {
+                    console.log('Sending offer to user:', userId);
+                    socket.emit('offer', peerConnection.localDescription, userId);
+                })
+                .catch(error => {
+                    console.error('Error creating offer:', error);
+                    showError('Error creating connection: ' + error.message);
+                });
+        });
+
+        socket.on('existing-participants', (participants) => {
+            console.log('Existing participants:', participants);
+            participants.forEach(userId => {
+                if (!peerConnections[userId]) {
+                    console.log('Creating peer connection for existing user:', userId);
+                    const peerConnection = createPeerConnection(userId);
+                    peerConnections[userId] = peerConnection;
+
+                    // Create and send offer
+                    peerConnection.createOffer({
+                        offerToReceiveAudio: true,
+                        offerToReceiveVideo: true
+                    })
+                        .then(offer => {
+                            console.log('Created offer for existing user:', userId);
+                            return peerConnection.setLocalDescription(offer);
+                        })
+                        .then(() => {
+                            console.log('Sending offer to existing user:', userId);
+                            socket.emit('offer', peerConnection.localDescription, userId);
+                        })
+                        .catch(error => {
+                            console.error('Error creating offer for existing user:', error);
+                            showError('Error creating connection: ' + error.message);
+                        });
+                }
+            });
+        });
+
         socket.on('offer', async (offer, fromUserId, targetUserId) => {
             console.log('Received offer from user:', fromUserId);
             if (targetUserId === userId) {
@@ -386,8 +404,30 @@
                     const peerConnection = peerConnections[fromUserId] || createPeerConnection(fromUserId);
                     peerConnections[fromUserId] = peerConnection;
 
+                    // Check if we're in a state where we can accept an offer
+                    if (peerConnection.signalingState !== 'stable') {
+                        console.log('Signaling state is not stable, waiting...');
+                        await Promise.all([
+                            new Promise(resolve => {
+                                const checkState = () => {
+                                    if (peerConnection.signalingState === 'stable') {
+                                        resolve();
+                                    } else {
+                                        setTimeout(checkState, 100);
+                                    }
+                                };
+                                checkState();
+                            })
+                        ]);
+                    }
+
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-                    const answer = await peerConnection.createAnswer();
+                    console.log('Remote description set successfully');
+
+                    const answer = await peerConnection.createAnswer({
+                        offerToReceiveAudio: true,
+                        offerToReceiveVideo: true
+                    });
                     await peerConnection.setLocalDescription(answer);
                     console.log('Sending answer to user:', fromUserId);
                     socket.emit('answer', answer, fromUserId);
@@ -403,7 +443,25 @@
             try {
                 const peerConnection = peerConnections[fromUserId];
                 if (peerConnection) {
+                    // Check if we're in a state where we can accept an answer
+                    if (peerConnection.signalingState !== 'have-local-offer') {
+                        console.log('Signaling state is not have-local-offer, waiting...');
+                        await Promise.all([
+                            new Promise(resolve => {
+                                const checkState = () => {
+                                    if (peerConnection.signalingState === 'have-local-offer') {
+                                        resolve();
+                                    } else {
+                                        setTimeout(checkState, 100);
+                                    }
+                                };
+                                checkState();
+                            })
+                        ]);
+                    }
+
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                    console.log('Remote description set successfully');
                 }
             } catch (error) {
                 console.error('Error handling answer:', error);
@@ -416,7 +474,35 @@
             try {
                 const peerConnection = peerConnections[fromUserId];
                 if (peerConnection) {
+                    // Check if remote description is set
+                    if (!peerConnection.remoteDescription) {
+                        console.log('Remote description not set yet, queueing ICE candidate');
+                        // Queue the candidate to be added later
+                        if (!peerConnection.queuedCandidates) {
+                            peerConnection.queuedCandidates = [];
+                        }
+                        peerConnection.queuedCandidates.push(candidate);
+                        return;
+                    }
+
+                    // Add the ICE candidate
                     await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                    console.log('Successfully added ICE candidate for user:', fromUserId);
+
+                    // Process any queued candidates
+                    if (peerConnection.queuedCandidates && peerConnection.queuedCandidates.length > 0) {
+                        console.log('Processing queued ICE candidates');
+                        const candidates = peerConnection.queuedCandidates;
+                        peerConnection.queuedCandidates = [];
+                        for (const queuedCandidate of candidates) {
+                            try {
+                                await peerConnection.addIceCandidate(new RTCIceCandidate(queuedCandidate));
+                                console.log('Successfully added queued ICE candidate');
+                            } catch (error) {
+                                console.error('Error adding queued ICE candidate:', error);
+                            }
+                        }
+                    }
                 }
             } catch (error) {
                 console.error('Error handling ICE candidate:', error);
