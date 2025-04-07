@@ -291,18 +291,50 @@
             const peerConnection = createPeerConnection(userId);
             peerConnections[userId] = peerConnection;
 
+            // Create and send offer
             peerConnection.createOffer()
-                .then(offer => peerConnection.setLocalDescription(offer))
+                .then(offer => {
+                    console.log('Created offer for user:', userId);
+                    return peerConnection.setLocalDescription(offer);
+                })
                 .then(() => {
+                    console.log('Sending offer to user:', userId);
                     socket.emit('offer', peerConnection.localDescription, userId);
                 })
                 .catch(error => {
+                    console.error('Error creating offer:', error);
                     showError('Error creating connection: ' + error.message);
                 });
         });
 
+        socket.on('existing-participants', (participants) => {
+            console.log('Existing participants:', participants);
+            participants.forEach(userId => {
+                if (!peerConnections[userId]) {
+                    const peerConnection = createPeerConnection(userId);
+                    peerConnections[userId] = peerConnection;
+
+                    // Create and send offer
+                    peerConnection.createOffer()
+                        .then(offer => {
+                            console.log('Created offer for existing user:', userId);
+                            return peerConnection.setLocalDescription(offer);
+                        })
+                        .then(() => {
+                            console.log('Sending offer to existing user:', userId);
+                            socket.emit('offer', peerConnection.localDescription, userId);
+                        })
+                        .catch(error => {
+                            console.error('Error creating offer for existing user:', error);
+                            showError('Error creating connection: ' + error.message);
+                        });
+                }
+            });
+        });
+
         // Create peer connection
         function createPeerConnection(userId) {
+            console.log('Creating peer connection for user:', userId);
             const peerConnection = new RTCPeerConnection({
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
@@ -311,19 +343,33 @@
                 ]
             });
 
+            // Add local stream to peer connection
             if (localStream) {
                 localStream.getTracks().forEach(track => {
+                    console.log('Adding track to peer connection:', track.kind);
                     peerConnection.addTrack(track, localStream);
                 });
             }
 
+            // Handle ICE candidates
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
+                    console.log('New ICE candidate for user:', userId);
                     socket.emit('ice-candidate', event.candidate, userId);
                 }
             };
 
+            // Handle connection state changes
+            peerConnection.onconnectionstatechange = () => {
+                console.log('Connection state changed for user', userId, ':', peerConnection.connectionState);
+                if (peerConnection.connectionState === 'connected') {
+                    showStatus('Connected to user: ' + userId);
+                }
+            };
+
+            // Handle incoming stream
             peerConnection.ontrack = (event) => {
+                console.log('Received track from user:', userId);
                 const stream = event.streams[0];
                 if (!document.getElementById(`video-${userId}`)) {
                     addVideoStream(stream, userId);
@@ -334,6 +380,7 @@
         }
 
         socket.on('offer', async (offer, fromUserId, targetUserId) => {
+            console.log('Received offer from user:', fromUserId);
             if (targetUserId === userId) {
                 try {
                     const peerConnection = peerConnections[fromUserId] || createPeerConnection(fromUserId);
@@ -342,31 +389,37 @@
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
                     const answer = await peerConnection.createAnswer();
                     await peerConnection.setLocalDescription(answer);
+                    console.log('Sending answer to user:', fromUserId);
                     socket.emit('answer', answer, fromUserId);
                 } catch (error) {
+                    console.error('Error handling offer:', error);
                     showError('Error handling offer: ' + error.message);
                 }
             }
         });
 
         socket.on('answer', async (answer, fromUserId) => {
+            console.log('Received answer from user:', fromUserId);
             try {
                 const peerConnection = peerConnections[fromUserId];
                 if (peerConnection) {
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
                 }
             } catch (error) {
+                console.error('Error handling answer:', error);
                 showError('Error handling answer: ' + error.message);
             }
         });
 
         socket.on('ice-candidate', async (candidate, fromUserId) => {
+            console.log('Received ICE candidate from user:', fromUserId);
             try {
                 const peerConnection = peerConnections[fromUserId];
                 if (peerConnection) {
                     await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
                 }
             } catch (error) {
+                console.error('Error handling ICE candidate:', error);
                 showError('Error handling ICE candidate: ' + error.message);
             }
         });
