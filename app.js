@@ -27,7 +27,8 @@ app.get('/', (req, res) => {
 // Store active rooms and their participants
 const rooms = {};
 
-io.on('connection', (socket) => {
+// Handle Socket.IO connection
+io.on('connect', (socket) => {
     console.log('a user connected');
 
     socket.on('join-room', (roomId, userId) => {
