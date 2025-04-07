@@ -170,6 +170,7 @@
         const protocol = window.location.protocol;
         const port = window.location.port;
         const socket = io(`${protocol}//${host}${port ? ':' + port : ''}`, {
+            path: '/socket.io/',
             transports: ['websocket', 'polling'],
             upgrade: true,
             rememberUpgrade: true,
@@ -179,7 +180,8 @@
             reconnectionDelayMax: 5000,
             timeout: 20000,
             forceNew: true,
-            autoConnect: true
+            autoConnect: true,
+            withCredentials: true
         });
 
         const videoGrid = document.getElementById('videoGrid');
@@ -363,14 +365,42 @@
             showStatus('Connected to server');
         });
 
-        socket.on('disconnect', () => {
-            console.log('Disconnected from server');
+        socket.on('disconnect', (reason) => {
+            console.log('Disconnected from server:', reason);
             showError('Disconnected from server. Attempting to reconnect...');
+            if (reason === 'io server disconnect') {
+                // The disconnection was initiated by the server, you need to reconnect manually
+                socket.connect();
+            }
         });
 
         socket.on('connect_error', (error) => {
             console.error('Connection error:', error);
             showError('Connection error: ' + error.message);
+            // Try to reconnect with polling if websocket fails
+            if (socket.io.engine.transport.name === 'websocket') {
+                socket.io.engine.transport.close();
+            }
+        });
+
+        socket.on('reconnect_attempt', () => {
+            console.log('Attempting to reconnect...');
+            showStatus('Attempting to reconnect...');
+        });
+
+        socket.on('reconnect', (attemptNumber) => {
+            console.log('Reconnected after', attemptNumber, 'attempts');
+            showStatus('Reconnected to server');
+        });
+
+        socket.on('reconnect_error', (error) => {
+            console.error('Reconnection error:', error);
+            showError('Reconnection error: ' + error.message);
+        });
+
+        socket.on('reconnect_failed', () => {
+            console.error('Failed to reconnect');
+            showError('Failed to reconnect. Please refresh the page.');
         });
 
         // Handle room events
