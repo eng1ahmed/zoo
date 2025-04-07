@@ -8,7 +8,9 @@ const io = require('socket.io')(server, {
         transports: ['websocket', 'polling'],
         credentials: true
     },
-    allowEIO3: true
+    allowEIO3: true,
+    pingTimeout: 60000,
+    pingInterval: 25000
 });
 const path = require('path');
 

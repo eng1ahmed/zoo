@@ -177,7 +177,9 @@
             reconnectionAttempts: 5,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
-            timeout: 20000
+            timeout: 20000,
+            forceNew: true,
+            autoConnect: true
         });
 
         const videoGrid = document.getElementById('videoGrid');
@@ -294,7 +296,10 @@
                     { urls: 'stun:stun1.l.google.com:19302' },
                     { urls: 'stun:stun2.l.google.com:19302' }
                 ],
-                iceCandidatePoolSize: 10
+                iceCandidatePoolSize: 10,
+                bundlePolicy: 'max-bundle',
+                rtcpMuxPolicy: 'require',
+                iceTransportPolicy: 'all'
             });
 
             // Add local stream to peer connection
@@ -320,12 +325,24 @@
                     showStatus('Connected to user: ' + userId);
                 } else if (peerConnection.connectionState === 'failed') {
                     showError('Connection failed with user: ' + userId);
+                    // Try to reconnect
+                    setTimeout(() => {
+                        if (peerConnection.connectionState === 'failed') {
+                            console.log('Attempting to reconnect...');
+                            peerConnection.restartIce();
+                        }
+                    }, 2000);
                 }
             };
 
             // Handle signaling state changes
             peerConnection.onsignalingstatechange = () => {
                 console.log('Signaling state changed for user', userId, ':', peerConnection.signalingState);
+            };
+
+            // Handle ICE connection state changes
+            peerConnection.oniceconnectionstatechange = () => {
+                console.log('ICE connection state changed for user', userId, ':', peerConnection.iceConnectionState);
             };
 
             // Handle incoming stream
@@ -339,6 +356,22 @@
 
             return peerConnection;
         }
+
+        // Handle socket connection events
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            showStatus('Connected to server');
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            showError('Disconnected from server. Attempting to reconnect...');
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+            showError('Connection error: ' + error.message);
+        });
 
         // Handle room events
         socket.on('user-connected', (userId) => {
@@ -524,14 +557,6 @@
 
         socket.on('room-full', () => {
             showError('Room is full! Maximum 5 participants allowed.');
-        });
-
-        socket.on('connect_error', (error) => {
-            showError('Connection error: ' + error.message);
-        });
-
-        socket.on('connect_timeout', () => {
-            showError('Connection timeout. Please try again.');
         });
 
         // Toggle video and audio controls
